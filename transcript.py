@@ -11,7 +11,6 @@ load_dotenv()
 # -----------------------------
 # YouTube & Transcript Functions
 # -----------------------------
-
 def extract_video_id(url):
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
@@ -57,7 +56,6 @@ def sanitize_filename(filename):
 # -----------------------------
 # Transcript Saving Functions
 # -----------------------------
-
 def save_raw_transcript(video_id, video_title, transcript):
     """
     Saves the raw transcript to a file named filename_raw.md
@@ -78,6 +76,7 @@ def save_raw_transcript(video_id, video_title, transcript):
                 timestamp = format_timestamp(entry['start'])
                 text = entry['text']
                 f.write(f"[{timestamp}] {text}\n")
+
         print(f"Raw transcript saved to {filepath}")
         return filepath
     except Exception as e:
@@ -101,6 +100,7 @@ def save_cleaned_transcript(video_id, video_title, cleaned_text):
             f.write(f"# {video_title or 'Unknown Title'} (Cleaned Transcript)\n\n")
             f.write("---\n\n")
             f.write(cleaned_text)
+
         print(f"Cleaned transcript saved to {filepath}")
         return filepath
     except Exception as e:
@@ -108,39 +108,63 @@ def save_cleaned_transcript(video_id, video_title, cleaned_text):
         return None
 
 # -----------------------------
-# Gemini Cleaning Function
+# Gemini Cleaning Function (Updated API)
 # -----------------------------
-
 def clean_transcript_with_gemini(raw_transcript_text):
     """
-    Leverages the Google Gemini 2.0 Flash experimental API (via google-genai)
-    to clean and reformat the raw transcript text into well-formatted paragraphs.
+    Leverages the Google Gemini API (updated version) to clean and reformat
+    the raw transcript text into well-formatted paragraphs.
     """
     try:
         from google import genai
+        from google.genai import types
 
         # Create a client for the Gemini model using your API key
         client = genai.Client(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-            http_options={"api_version": "v1alpha"},
+            api_key=os.getenv("GEMINI_API_KEY")  # Note: changed from GOOGLE_API_KEY to GEMINI_API_KEY
         )
 
-        # Build a prompt that instructs the model to clean and format the transcript.
+        # Use the updated model name
+        model = "gemini-2.5-flash-lite-preview-06-17"
+
+        # Build a prompt that instructs the model to clean and format the transcript
         prompt = (
             "The following is a raw YouTube transcript. "
-            "Please reformat the transcript into clear paragraphs. "
+            "Please reformat the transcript into clear, well-structured paragraphs. "
             "Each paragraph should begin with the timestamp of the first line in that paragraph, "
-            "and the formatting should be cleaned up (remove extraneous line breaks, duplicate timestamps, etc.).\n\n"
+            "and the formatting should be cleaned up (remove extraneous line breaks, duplicate timestamps, etc.). "
+            "Make it readable and well-organized while preserving all the content.\n\n"
             "Transcript:\n" + raw_transcript_text
         )
 
-        # Send the prompt to the Gemini model
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            contents=[prompt],
+        # Prepare the content using the new API structure
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=prompt),
+                ],
+            ),
+        ]
+
+        # Configure the generation
+        generate_content_config = types.GenerateContentConfig(
+            max_output_tokens=65000,
+            response_mime_type="text/plain",
         )
-        # Return the cleaned text
-        return response.text
+
+        # Generate content using the streaming API
+        response_text = ""
+        for chunk in client.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=generate_content_config,
+        ):
+            if chunk.text:
+                response_text += chunk.text
+
+        return response_text.strip()
+
     except Exception as e:
         print(f"Error cleaning transcript with Gemini: {str(e)}")
         return None
@@ -148,7 +172,6 @@ def clean_transcript_with_gemini(raw_transcript_text):
 # -----------------------------
 # Main Function
 # -----------------------------
-
 def main():
     url = input("Please enter the YouTube video URL: ")
     video_id = extract_video_id(url)
@@ -165,6 +188,7 @@ def main():
                 timestamp = format_timestamp(entry['start'])
                 text = entry['text']
                 raw_transcript_lines.append(f"[{timestamp}] {text}")
+
             raw_transcript_text = "\n".join(raw_transcript_lines)
 
             # Print the raw transcript to console (optional)
@@ -172,18 +196,20 @@ def main():
             print("==========================")
             print(f"Title: {video_title or 'Unknown Title'}")
             print("==========================")
-            print(raw_transcript_text)
+            print(raw_transcript_text[:500] + "..." if len(raw_transcript_text) > 500 else raw_transcript_text)
 
             # Save the raw transcript file
             save_raw_transcript(video_id, video_title, transcript)
 
-            # Clean the transcript using Gemini 2.0 Flash experimental API
+            # Clean the transcript using Gemini API
             print("\nCleaning transcript with Gemini (this may take a moment)...")
             cleaned_transcript = clean_transcript_with_gemini(raw_transcript_text)
+
             if cleaned_transcript:
                 print("\nCleaned Transcript:")
                 print("==========================")
-                print(cleaned_transcript)
+                print(cleaned_transcript[:1000] + "..." if len(cleaned_transcript) > 1000 else cleaned_transcript)
+
                 # Save the cleaned transcript file
                 save_cleaned_transcript(video_id, video_title, cleaned_transcript)
             else:
